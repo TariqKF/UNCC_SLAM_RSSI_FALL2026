@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UWB Telemetry</title>
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #121821; --panel2: #18202b; --line: #243040;
+    --text: #e6edf3; --muted: #8b98a8;
+    --A: #34d399; --B: #f472b6; --C: #60a5fa; --T: #ef4444;
+    --ok: #34d399; --warn: #fbbf24; --bad: #ef4444;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, "Segoe UI", sans-serif; padding: 0 16px 24px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+           padding: 14px 0; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
+  h2 { font-size: 12px; margin: 0 0 10px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+  .pill { font: 600 12px var(--mono); padding: 4px 10px; border-radius: 999px;
+          background: var(--panel2); border: 1px solid var(--line); }
+  .pill.live { color: var(--ok); border-color: var(--ok); }
+  .pill.demo { color: var(--warn); border-color: var(--warn); }
+  .spacer { flex: 1; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+           border-radius: 8px; padding: 7px 14px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: #1f6feb; border-color: #1f6feb; }
+  button.rec { color: var(--bad); border-color: var(--bad); }
+  .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  #map { width: 100%; aspect-ratio: 4 / 3; display: block; border-radius: 8px; background: #0d131b; }
+  .side { display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--c);
+          border-radius: 10px; padding: 10px 14px; }
+  .card .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .card .name { font-weight: 600; }
+  .card .id { font: 12px var(--mono); color: var(--muted); }
+  .big { font: 600 28px var(--mono); margin: 2px 0; }
+  .big small { font-size: 14px; color: var(--muted); font-weight: 400; }
+  .sub { display: flex; gap: 14px; flex-wrap: wrap; font: 12px var(--mono); color: var(--muted); }
+  .stale { opacity: .45; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 900px) { .charts { grid-template-columns: 1fr; } }
+  .chart { width: 100%; height: 200px; display: block; }
+  .bottom { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 900px) { .bottom { grid-template-columns: 1fr; } }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 4px 6px; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  input[type=number] { width: 72px; background: var(--panel2); color: var(--text);
+         border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: 13px var(--mono); }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 16px; font: 13px var(--mono); margin-bottom: 10px; }
+  .stats span { color: var(--muted); }
+  #console { height: 150px; overflow-y: auto; background: #0d131b; border-radius: 8px;
+             padding: 8px; font: 12px var(--mono); color: var(--muted); white-space: pre-wrap; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  label.chk { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>UWB TELEMETRY</h1>
+  <span id="status" class="pill">DISCONNECTED</span>
+  <span class="spacer"></span>
+  <button id="btnConnect" class="primary">Connect tag</button>
+  <button id="btnDemo">Demo mode</button>
+  <button id="btnRecord">Start recording</button>
+  <button id="btnDownload">Download CSV</button>
+</header>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Map (top view, meters)</h2>
+    <canvas id="map"></canvas>
+  </div>
+
+  <div class="side">
+    <div class="card" style="--c: var(--T)">
+      <div class="top"><span class="name">Tag (Red)</span><span class="id">7D:00</span></div>
+      <div class="big" id="tagXY">—</div>
+      <div class="sub">
+        <span id="tagFix">no fix</span>
+        <span id="tagErr">err —</span>
+      </div>
+    </div>
+    <div id="anchorCards"></div>
+  </div>
+</div>
+
+<div class="charts">
+  <div class="panel"><h2>Distance to each anchor (m), last 30 s</h2><canvas id="chartRange" class="chart"></canvas></div>
+  <div class="panel"><h2>RX power (dBm), last 30 s</h2><canvas id="chartRx" class="chart"></canvas></div>
+</div>
+
+<div class="bottom">
+  <div class="panel">
+    <h2>Anchor positions (measure these in meters)</h2>
+    <table>
+      <thead><tr><th>Anchor</th><th>X</th><th>Y</th><th>Height Z</th><th>Range offset</th></tr></thead>
+      <tbody id="setupRows"></tbody>
+    </table>
+    <div style="margin-top:10px">Tag height Z: <input type="number" step="0.01" id="tagZ"> m</div>
+    <label class="chk"><input type="checkbox" id="smooth" checked> Smooth position</label>
+    <div class="hint">Pick one anchor as the origin (0, 0). X and Y are measured along the ground, Z is
+      the antenna height. Range offset is subtracted from that anchor's distance (from the 1.00 m calibration test).
+      Settings are saved in this browser.</div>
+  </div>
+  <div class="panel">
+    <h2>Link</h2>
+    <div class="stats">
+      <div><span>Packets/s </span><b id="sRate">0</b></div>
+      <div><span>Total </span><b id="sTotal">0</b></div>
+      <div><span>Dropped </span><b id="sDropped">0</b></div>
+      <div><span>Bad checksum </span><b id="sBad">0</b></div>
+      <div><span>Recorded rows </span><b id="sRec">0</b></div>
+      <div><span>Tag uptime </span><b id="sUptime">—</b></div>
+    </div>
+    <div id="console"></div>
+  </div>
+</div>
+
+<script>
+// ---------- Setup ----------
+const ANCHORS = {
+  A: { color: "#34d399", name: "Green", id: "1785" },
+  B: { color: "#f472b6", name: "Pink",  id: "1786" },
+  C: { color: "#60a5fa", name: "Blue",  id: "1787" },
+};
+const KEYS = Object.keys(ANCHORS);
+const TAG_COLOR = "#ef4444";
+const STALE_MS = 1500;      // a range older than this is not used for position
+const HISTORY_MS = 30000;   // chart window
+
+const DEFAULT_CFG = {
+  A: { x: 0, y: 0, z: 1, off: 0 },
+  B: { x: 6, y: 0, z: 1, off: 0 },
+  C: { x: 3, y: 5, z: 1, off: 0 },
+  tagZ: 1, smooth: true,
+};
+let cfg = loadCfg();
+
+function loadCfg() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("uwbCfg"));
+    if (saved && saved.A && saved.B && saved.C) return { ...DEFAULT_CFG, ...saved };
+  } catch (e) {}
+  return structuredClone(DEFAULT_CFG);
+}
+function saveCfg() { try { localStorage.setItem("uwbCfg", JSON.stringify(cfg)); } catch (e) {} }
+
+// ---------- Live state ----------
+const live = {};
+for (const k of KEYS) live[k] = { r: null, rx: null, t: 0, hits: [], hist: [] };
+let pos = null;                 // { x, y, err, n }
+let trail = [];
+const stats = { total: 0, dropped: 0, bad: 0, lastSeq: null, tagMs: null, arrivals: [] };
+let recording = false;
+let rows = [];
+
+// ---------- Packet parsing ----------
+function handleLine(line) {
+  line = line.trim();
+  if (!line) return;
+  if (line[0] !== "$") { log(line); return; }       // plain text like "Tag ready"
+
+  const star = line.lastIndexOf("*");
+  if (star < 0) { stats.bad++; return; }
+  const body = line.slice(1, star);
+  let cs = 0;
+  for (let i = 0; i < body.length; i++) cs ^= body.charCodeAt(i);
+  if (cs !== parseInt(line.slice(star + 1), 16)) { stats.bad++; return; }
+
+  const f = body.split(",");
+  const seq = Number(f[1]);
+  trackSeq(seq);
+  stats.tagMs = Number(f[2]);
+  stats.total++;
+  stats.arrivals.push(performance.now());
+
+  if (f[0] === "UWB") {
+    const label = resolveLabel(f[3], f[4]);
+    if (!label) return;
+    onRange(label, seq, Number(f[2]), f[4], Number(f[5]), Number(f[6]));
+  } else if (f[0] === "EVT") {
+    const label = resolveLabel(f[4], f[5]);
+    const who = label ? `${label} (${ANCHORS[label].name})` : `unknown ${f[5]}`;
+    log(`Anchor ${f[3] === "FOUND" ? "found" : "LOST"}: ${who}`);
+  }
+}
+
+const warnedIds = new Set();
+function resolveLabel(label, shortId) {
+  if (ANCHORS[label]) return label;
+  const k = KEYS.find(k => ANCHORS[k].id === shortId);
+  if (k) return k;
+  if (!warnedIds.has(shortId)) { warnedIds.add(shortId); log(`Unknown anchor short ID ${shortId}`); }
+  return null;
+}
+
+function trackSeq(seq) {
+  if (stats.lastSeq !== null) {
+    if (seq > stats.lastSeq + 1) stats.dropped += seq - stats.lastSeq - 1;
+    else if (seq <= stats.lastSeq) log("Tag restarted (sequence reset)");
+  }
+  stats.lastSeq = seq;
+}
+
+function onRange(k, seq, tagMs, shortId, range, rx) {
+  const now = performance.now();
+  const a = live[k];
+  a.r = range - (Number(cfg[k].off) || 0);
+  a.rx = rx;
+  a.t = now;
+  a.hits.push(now);
+  a.hist.push({ t: now, r: a.r, rx });
+  while (a.hist.length && now - a.hist[0].t > HISTORY_MS) a.hist.shift();
+
+  solvePosition();
+
+  if (recording) {
+    rows.push([new Date().toISOString(), seq, tagMs, k, ANCHORS[k].name, shortId,
+               a.r.toFixed(3), rx.toFixed(2),
+               pos ? pos.x.toFixed(3) : "", pos ? pos.y.toFixed(3) : "", pos ? pos.err.toFixed(3) : ""]);
+  }
+}
+
+// ---------- Trilateration ----------
+// Each anchor gives a circle: distance from (x, y) to the anchor = measured range.
+// 1) A linear least-squares guess (subtracting circle equations removes x² and y²).
+// 2) A few Gauss-Newton steps to minimise the real distance errors.
+function solvePosition() {
+  const now = performance.now();
+  const pts = [];
+  for (const k of KEYS) {
+    const a = live[k];
+    if (a.r === null || now - a.t > STALE_MS) continue;
+    const c = cfg[k];
+    const dz = Number(c.z) - Number(cfg.tagZ);
+    const horiz = Math.sqrt(Math.max(a.r * a.r - dz * dz, 0));   // 3D range -> ground distance
+    pts.push({ x: Number(c.x), y: Number(c.y), d: horiz });
+  }
+  if (pts.length < 3) { pos = null; return; }
+
+  const p0 = pts[0];
+  let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i];
+    const ax = 2 * (p.x - p0.x), ay = 2 * (p.y - p0.y);
+    const b = p0.d ** 2 - p.d ** 2 + p.x ** 2 - p0.x ** 2 + p.y ** 2 - p0.y ** 2;
+    a11 += ax * ax; a12 += ax * ay; a22 += ay * ay; b1 += ax * b; b2 += ay * b;
+  }
+  const det = a11 * a22 - a12 * a12;
+  if (Math.abs(det) < 1e-9) { pos = null; return; }   // anchors in a straight line
+  let x = (a22 * b1 - a12 * b2) / det;
+  let y = (a11 * b2 - a12 * b1) / det;
+
+  for (let it = 0; it < 10; it++) {
+    let j11 = 0, j12 = 0, j22 = 0, g1 = 0, g2 = 0;
+    for (const p of pts) {
+      const dx = x - p.x, dy = y - p.y;
+      const dist = Math.hypot(dx, dy) || 1e-6;
+      const res = dist - p.d, jx = dx / dist, jy = dy / dist;
+      j11 += jx * jx; j12 += jx * jy; j22 += jy * jy; g1 += jx * res; g2 += jy * res;
+    }
+    const d = j11 * j22 - j12 * j12;
+    if (Math.abs(d) < 1e-12) break;
+    const sx = (j22 * g1 - j12 * g2) / d, sy = (j11 * g2 - j12 * g1) / d;
+    x -= sx; y -= sy;
+    if (Math.hypot(sx, sy) < 1e-5) break;
+  }
+
+  let sq = 0;
+  for (const p of pts) sq += (Math.hypot(x - p.x, y - p.y) - p.d) ** 2;
+  const err = Math.sqrt(sq / pts.length);
+
+  if (cfg.smooth && pos) { x = pos.x + 0.3 * (x - pos.x); y = pos.y + 0.3 * (y - pos.y); }
+  pos = { x, y, err, n: pts.length };
+  trail.push({ x, y });
+  if (trail.length > 300) trail.shift();
+}
+
+// ---------- Serial (Web Serial API, Chrome/Edge) ----------
+let port = null, reader = null;
+
+async function connect() {
+  if (port) { await disconnect(); return; }
+  if (!("serial" in navigator)) { log("This browser has no Web Serial. Use Chrome or Edge."); return; }
+  try {
+    stopDemo();
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    try { await port.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (e) {}
+    setStatus("live", "LIVE");
+    btnConnect.textContent = "Disconnect";
+    log("Connected. Waiting for packets…");
+    readLoop();
+  } catch (e) {
+    log("Connect failed: " + e.message + " (close the Arduino Serial Monitor first)");
+    port = null;
+  }
+}
+
+async function readLoop() {
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    while (port && port.readable) {
+      reader = port.readable.getReader();
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl;
+          while ((nl = buf.indexOf("\n")) >= 0) { handleLine(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+        }
+      } finally { reader.releaseLock(); reader = null; }
+    }
+  } catch (e) {
+    log("Serial error: " + e.message);
+  }
+  if (port) await disconnect();
+}
+
+async function disconnect() {
+  const p = port; port = null;
+  try { if (reader) await reader.cancel(); } catch (e) {}
+  try { await p.close(); } catch (e) {}
+  setStatus("", "DISCONNECTED");
+  btnConnect.textContent = "Connect tag";
+  log("Disconnected.");
+}
+
+// ---------- Demo mode (fake tag walking around, same packet format) ----------
+let demoTimer = null, demoSeq = 0, demoTurn = 0;
+function startDemo() {
+  if (port) return;
+  setStatus("demo", "DEMO");
+  btnDemo.textContent = "Stop demo";
+  const t0 = performance.now();
+  demoTimer = setInterval(() => {
+    const t = (performance.now() - t0) / 1000;
+    const xs = KEYS.map(k => +cfg[k].x), ys = KEYS.map(k => +cfg[k].y);
+    const cx = xs.reduce((a, b) => a + b) / 3, cy = ys.reduce((a, b) => a + b) / 3;
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 1);
+    const tx = cx + 0.35 * span * Math.sin(t * 0.4), ty = cy + 0.3 * span * Math.sin(t * 0.7);
+    const k = KEYS[demoTurn++ % 3];
+    const c = cfg[k];
+    const r = Math.hypot(tx - c.x, ty - c.y, c.z - cfg.tagZ) + (Math.random() - 0.5) * 0.1;
+    const rx = -45 - 20 * Math.log10(Math.max(r, 0.3)) + (Math.random() - 0.5) * 2;
+    if (Math.random() < 0.01) demoSeq++;   // pretend a packet got lost
+    const body = `UWB,${demoSeq++},${Math.round(t * 1000)},${k},${ANCHORS[k].id},${r.toFixed(3)},${rx.toFixed(2)}`;
+    let cs = 0;
+    for (let i = 0; i < body.length; i++) cs ^= body.charCodeAt(i);
+    handleLine(`$${body}*${cs.toString(16).toUpperCase().padStart(2, "0")}`);
+  }, 37);
+}
+function stopDemo() {
+  if (!demoTimer) return;
+  clearInterval(demoTimer); demoTimer = null;
+  btnDemo.textContent = "Demo mode";
+  if (!port) setStatus("", "DISCONNECTED");
+}
+
+// ---------- Recording ----------
+function toggleRecord() {
+  recording = !recording;
+  btnRecord.textContent = recording ? "Stop recording" : "Start recording";
+  btnRecord.classList.toggle("rec", recording);
+  log(recording ? "Recording started" : `Recording stopped (${rows.length} rows)`);
+}
+function downloadCsv() {
+  if (!rows.length) { log("Nothing recorded yet."); return; }
+  const header = "pc_time,seq,tag_ms,anchor,color,short_id,range_m,rx_dbm,tag_x,tag_y,fix_err_m";
+  const csv = header + "\n" + rows.map(r => r.join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `uwb_${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------- Drawing ----------
+function fitCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+function drawMap() {
+  const { ctx, w, h } = fitCanvas(mapCv);
+  ctx.clearRect(0, 0, w, h);
+
+  const xs = KEYS.map(k => +cfg[k].x), ys = KEYS.map(k => +cfg[k].y);
+  if (pos) { xs.push(pos.x); ys.push(pos.y); }
+  const pad = 1.5;
+  let minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
+  let minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
+  const s = Math.min(w / (maxX - minX), h / (maxY - minY));
+  const ox = (w - (maxX - minX) * s) / 2, oy = (h - (maxY - minY) * s) / 2;
+  const X = x => ox + (x - minX) * s;
+  const Y = y => h - oy - (y - minY) * s;    // y grows upward
+
+  // grid
+  const step = s > 60 ? 0.5 : s > 25 ? 1 : 2;
+  ctx.lineWidth = 1; ctx.font = "11px Consolas, monospace";
+  for (let gx = Math.ceil(minX / step) * step; gx <= maxX; gx += step) {
+    ctx.strokeStyle = Math.abs(gx) < 1e-9 ? "#3a4a5e" : "#1a2430";
+    ctx.beginPath(); ctx.moveTo(X(gx), 0); ctx.lineTo(X(gx), h); ctx.stroke();
+    ctx.fillStyle = "#4b5a6c"; ctx.fillText(+gx.toFixed(1), X(gx) + 3, h - 4);
+  }
+  for (let gy = Math.ceil(minY / step) * step; gy <= maxY; gy += step) {
+    ctx.strokeStyle = Math.abs(gy) < 1e-9 ? "#3a4a5e" : "#1a2430";
+    ctx.beginPath(); ctx.moveTo(0, Y(gy)); ctx.lineTo(w, Y(gy)); ctx.stroke();
+    ctx.fillStyle = "#4b5a6c"; ctx.fillText(+gy.toFixed(1), 4, Y(gy) - 3);
+  }
+
+  const now = performance.now();
+  // range circles
+  for (const k of KEYS) {
+    const a = live[k];
+    if (a.r === null || now - a.t > STALE_MS) continue;
+    const c = cfg[k];
+    const dz = c.z - cfg.tagZ;
+    const rh = Math.sqrt(Math.max(a.r * a.r - dz * dz, 0));
+    ctx.strokeStyle = ANCHORS[k].color + "55"; ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.arc(X(c.x), Y(c.y), rh * s, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // trail
+  if (trail.length > 1) {
+    ctx.strokeStyle = TAG_COLOR + "66"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(X(trail[0].x), Y(trail[0].y));
+    for (const p of trail) ctx.lineTo(X(p.x), Y(p.y));
+    ctx.stroke();
+  }
+
+  // lines tag -> anchors with distance labels
+  if (pos) {
+    for (const k of KEYS) {
+      const a = live[k], c = cfg[k];
+      if (a.r === null) continue;
+      ctx.strokeStyle = ANCHORS[k].color; ctx.lineWidth = 1.5;
+      ctx.globalAlpha = now - a.t > STALE_MS ? 0.25 : 0.9;
+      ctx.beginPath(); ctx.moveTo(X(pos.x), Y(pos.y)); ctx.lineTo(X(c.x), Y(c.y)); ctx.stroke();
+      const mx = (X(pos.x) + X(c.x)) / 2, my = (Y(pos.y) + Y(c.y)) / 2;
+      const txt = a.r.toFixed(2) + " m";
+      ctx.font = "bold 12px Consolas, monospace";
+      const tw = ctx.measureText(txt).width;
+      ctx.fillStyle = "#0b0f14cc"; ctx.fillRect(mx - tw / 2 - 4, my - 9, tw + 8, 18);
+      ctx.fillStyle = ANCHORS[k].color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(txt, mx, my);
+      ctx.textAlign = "start"; ctx.textBaseline = "alphabetic"; ctx.globalAlpha = 1;
+    }
+  }
+
+  // anchors
+  for (const k of KEYS) {
+    const c = cfg[k];
+    ctx.fillStyle = ANCHORS[k].color;
+    ctx.beginPath(); ctx.rect(X(c.x) - 8, Y(c.y) - 8, 16, 16); ctx.fill();
+    ctx.fillStyle = "#0b0f14"; ctx.font = "bold 12px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(k, X(c.x), Y(c.y) + 1);
+    ctx.fillStyle = ANCHORS[k].color; ctx.textBaseline = "top"; ctx.font = "12px system-ui";
+    ctx.fillText(ANCHORS[k].name, X(c.x), Y(c.y) + 12);
+    ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+  }
+
+  // tag
+  if (pos) {
+    ctx.fillStyle = TAG_COLOR; ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(X(pos.x), Y(pos.y), 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+}
+
+function drawChart(cv, field, unit) {
+  const { ctx, w, h } = fitCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  const now = performance.now();
+  let lo = Infinity, hi = -Infinity;
+  for (const k of KEYS) for (const p of live[k].hist) { lo = Math.min(lo, p[field]); hi = Math.max(hi, p[field]); }
+  if (!isFinite(lo)) {
+    ctx.fillStyle = "#4b5a6c"; ctx.font = "13px system-ui"; ctx.fillText("No data yet", 12, 24); return;
+  }
+  const padV = Math.max((hi - lo) * 0.1, field === "r" ? 0.1 : 1);
+  lo -= padV; hi += padV;
+  const L = 44, R = 8, T = 8, B = 18;
+  const X = t => L + (1 - (now - t) / HISTORY_MS) * (w - L - R);
+  const Y = v => T + (1 - (v - lo) / (hi - lo)) * (h - T - B);
+
+  ctx.font = "11px Consolas, monospace"; ctx.fillStyle = "#4b5a6c"; ctx.strokeStyle = "#1a2430"; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4;
+    ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(w - R, Y(v)); ctx.stroke();
+    ctx.fillText(v.toFixed(field === "r" ? 2 : 0), 2, Y(v) + 4);
+  }
+  for (let s = 0; s <= 30; s += 10) ctx.fillText(`-${30 - s}s`, X(now - (30 - s) * 1000) - 10, h - 4);
+
+  for (const k of KEYS) {
+    const hst = live[k].hist;
+    if (hst.length < 2) continue;
+    ctx.strokeStyle = ANCHORS[k].color; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    hst.forEach((p, i) => i ? ctx.lineTo(X(p.t), Y(p[field])) : ctx.moveTo(X(p.t), Y(p[field])));
+    ctx.stroke();
+  }
+}
+
+// ---------- Text panels ----------
+function buildUi() {
+  anchorCards.innerHTML = KEYS.map(k => `
+    <div class="card" id="card${k}" style="--c:${ANCHORS[k].color};margin-bottom:12px">
+      <div class="top"><span class="name">Anchor ${k} (${ANCHORS[k].name})</span><span class="id">ID ${ANCHORS[k].id}</span></div>
+      <div class="big" id="d${k}">— <small>m</small></div>
+      <div class="sub"><span id="rx${k}">RX —</span><span id="hz${k}">0 Hz</span><span id="age${k}">—</span></div>
+    </div>`).join("");
+
+  setupRows.innerHTML = KEYS.map(k => `
+    <tr><td><span class="dot" style="background:${ANCHORS[k].color}"></span>${k} ${ANCHORS[k].name}</td>
+    ${["x", "y", "z", "off"].map(f => `<td><input type="number" step="0.01" data-k="${k}" data-f="${f}" value="${cfg[k][f]}"></td>`).join("")}</tr>`).join("");
+
+  setupRows.addEventListener("input", e => {
+    const el = e.target;
+    if (!el.dataset.k) return;
+    const v = parseFloat(el.value);
+    if (!isNaN(v)) { cfg[el.dataset.k][el.dataset.f] = v; trail = []; saveCfg(); }
+  });
+  tagZ.value = cfg.tagZ;
+  tagZ.addEventListener("input", () => { const v = parseFloat(tagZ.value); if (!isNaN(v)) { cfg.tagZ = v; saveCfg(); } });
+  smooth.checked = cfg.smooth;
+  smooth.addEventListener("change", () => { cfg.smooth = smooth.checked; saveCfg(); });
+}
+
+function updateText() {
+  const now = performance.now();
+  for (const k of KEYS) {
+    const a = live[k];
+    while (a.hits.length && now - a.hits[0] > 2000) a.hits.shift();
+    const stale = a.r === null || now - a.t > STALE_MS;
+    document.getElementById("card" + k).classList.toggle("stale", stale);
+    document.getElementById("d" + k).innerHTML = (a.r === null ? "—" : a.r.toFixed(2)) + " <small>m</small>";
+    document.getElementById("rx" + k).textContent = a.rx === null ? "RX —" : `RX ${a.rx.toFixed(1)} dBm`;
+    document.getElementById("hz" + k).textContent = `${(a.hits.length / 2).toFixed(1)} Hz`;
+    document.getElementById("age" + k).textContent = a.r === null ? "no data" : `${((now - a.t) / 1000).toFixed(1)} s ago`;
+  }
+  if (pos && now - Math.max(...KEYS.map(k => live[k].t)) < STALE_MS) {
+    tagXY.innerHTML = `${pos.x.toFixed(2)}, ${pos.y.toFixed(2)} <small>m</small>`;
+    tagFix.textContent = `fix from ${pos.n} anchors`;
+    tagFix.style.color = "";
+    tagErr.textContent = `err ±${pos.err.toFixed(2)} m`;
+    tagErr.style.color = pos.err < 0.15 ? "var(--ok)" : pos.err < 0.4 ? "var(--warn)" : "var(--bad)";
+  } else {
+    tagXY.innerHTML = "—";
+    tagFix.textContent = "no fix (need 3 anchors)";
+    tagFix.style.color = "var(--warn)";
+    tagErr.textContent = "err —"; tagErr.style.color = "";
+  }
+  while (stats.arrivals.length && now - stats.arrivals[0] > 2000) stats.arrivals.shift();
+  sRate.textContent = (stats.arrivals.length / 2).toFixed(1);
+  sTotal.textContent = stats.total;
+  sDropped.textContent = stats.dropped;
+  sBad.textContent = stats.bad;
+  sRec.textContent = rows.length;
+  sUptime.textContent = stats.tagMs === null ? "—" : `${(stats.tagMs / 1000).toFixed(0)} s`;
+}
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  consoleEl.textContent += `[${t}] ${msg}\n`;
+  if (consoleEl.textContent.length > 20000) consoleEl.textContent = consoleEl.textContent.slice(-15000);
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+function setStatus(cls, text) { statusEl.className = "pill " + cls; statusEl.textContent = text; }
+
+// ---------- Start ----------
+const $ = id => document.getElementById(id);
+const mapCv = $("map"), chartRange = $("chartRange"), chartRx = $("chartRx");
+const statusEl = $("status"), consoleEl = $("console");
+const btnConnect = $("btnConnect"), btnDemo = $("btnDemo"), btnRecord = $("btnRecord"), btnDownload = $("btnDownload");
+const anchorCards = $("anchorCards"), setupRows = $("setupRows"), tagZ = $("tagZ"), smooth = $("smooth");
+const tagXY = $("tagXY"), tagFix = $("tagFix"), tagErr = $("tagErr");
+const sRate = $("sRate"), sTotal = $("sTotal"), sDropped = $("sDropped"), sBad = $("sBad"), sRec = $("sRec"), sUptime = $("sUptime");
+
+btnConnect.onclick = connect;
+btnDemo.onclick = () => demoTimer ? stopDemo() : startDemo();
+btnRecord.onclick = toggleRecord;
+btnDownload.onclick = downloadCsv;
+
+buildUi();
+log("Ready. Plug in the tag, close the Arduino Serial Monitor, then click Connect tag. Or try Demo mode.");
+
+let lastText = 0;
+function frame(t) {
+  drawMap();
+  drawChart(chartRange, "r");
+  drawChart(chartRx, "rx");
+  if (t - lastText > 100) { updateText(); lastText = t; }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

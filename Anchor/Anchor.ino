@@ -9,7 +9,9 @@ const uint8_t PIN_RST = 27;
 const uint8_t PIN_IRQ = 34;
 
 // This anchor's unique address
-#define ANCHOR_ADD "86:17:5B:D5:A9:9A:E2:9C"
+// ===== CHANGE THIS FOR EACH ANCHOR =====
+// Anchor 1 = "86:...", Anchor 2 = "87:...", Anchor 3 = "88:..."
+#define ANCHOR_ADD "87:17:5B:D5:A9:9A:E2:9C"
 
 void newRange() {
   Serial.print("from: ");
@@ -39,7 +41,7 @@ void setup() {
   DW1000Ranging.attachNewRange(newRange);
   DW1000Ranging.attachBlinkDevice(newBlink);
   DW1000Ranging.attachInactiveDevice(inactiveDevice);
-  DW1000Ranging.startAsAnchor(ANCHOR_ADD, DW1000.MODE_LONGDATA_RANGE_LOWPOWER);
+  DW1000Ranging.startAsAnchor(ANCHOR_ADD, DW1000.MODE_LONGDATA_RANGE_LOWPOWER, false);
   Serial.println("Anchor ready");
 }
 
